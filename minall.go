@@ -2,10 +2,8 @@ package main
 
 import (
 	"bufio"
-	"crypto/sha256"
 	_ "embed"
 	"encoding/base64"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -14,8 +12,6 @@ import (
 	"strings"
 	"sync"
 	"unicode/utf8"
-
-	"github.com/go-pdf/fpdf"
 )
 
 const (
@@ -25,18 +21,21 @@ const (
 )
 
 func main() {
-	dirPath := flag.String("dir", "", "Path to the input or output directory")
-	outputPath := flag.String("out", "outfile.txt", "Path to output file when encoding. Ignored when decoding.")
-	decompress := flag.String("decode", "", "If set, decode from the specified input file instead of encoding")
-	pdf := flag.Bool("pdf", false, "Encode PDF file")
-	flag.Parse()
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: minall folder_path")
+		return
+	}
+	dirPath := &(os.Args[1])
+	//dirPath := flag.String("dir", "", "Path to the input or output directory")
+	outputPath := "outfile.html"
+	decompress := ""
+	if os.Args[1] == "-d" {
+		decompress = os.Args[2]
+	}
+	html := true
 
-	if *decompress != "" {
-		if *dirPath == "" {
-			fmt.Fprintln(os.Stderr, "Error: output directory path required for decoding. Use -dir <directory>")
-			os.Exit(1)
-		}
-		f, err := os.Open(*decompress)
+	if decompress != "" {
+		f, err := os.Open(decompress)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error opening input file: %v\n", err)
 			os.Exit(1)
@@ -54,11 +53,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if *pdf && *outputPath == "outfile.txt" {
-		*outputPath = "outfile.pdf"
-	}
-
-	f, err := os.Create(*outputPath)
+	f, err := os.Create(outputPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating output file: %v\n", err)
 		os.Exit(1)
@@ -66,11 +61,11 @@ func main() {
 	defer f.Close()
 
 	var flow io.Writer = f
-	if *pdf {
+	if html {
 		r, w := io.Pipe()
 		wg := &sync.WaitGroup{}
 		wg.Add(1)
-		go makePDF(flow, r, wg)
+		go makeHTML(flow, r, wg)
 		flow = w
 		defer func() {
 			r.Close()
@@ -89,6 +84,14 @@ func main() {
 	Install: brew install --cask mactex-no-gui
 	Install the fonts
 	Run: to_pdf.sh `)
+}
+
+func DJB2(data []byte) uint32 {
+	hash := uint32(5381)
+	for _, b := range data {
+		hash = ((hash << 5) + hash) + uint32(b) // hash * 33 + b
+	}
+	return hash
 }
 
 func decodeArchive(r io.Reader, baseDir string) error {
@@ -230,8 +233,8 @@ func walkAndEncode(root string, w io.Writer) error {
 			return err
 		}
 
-		hash := sha256.Sum256(data)
-		shortHash := fmt.Sprintf("%x", hash[:])[:8]
+		hash := DJB2(data)
+		shortHash := fmt.Sprintf("%x", hash)
 		timestamp := info.ModTime().UTC().Format("2006-01-02")
 		_, err = fmt.Fprintf(w, "F,%s,%d,%s,%s,", escapeCommas(relPath), len(data), timestamp, shortHash)
 		if err != nil {
@@ -292,6 +295,20 @@ func encodeData(data []byte, w io.Writer) error {
 		return nil
 	}
 
+	countUnprintables := 0
+	for _, b := range data {
+		if b < 32 || b > 126 {
+			countUnprintables++
+		}
+	}
+	if countUnprintables*10 > len(data) { // over 10%
+		if _, err := w.Write([]byte("base64:")); err != nil {
+			return err
+		}
+		_, err := base64.NewEncoder(base64.StdEncoding, w).Write(data)
+		return err
+	}
+
 	for _, b := range data {
 		if b == '\n' {
 			if err := flushUnprintables(); err != nil {
@@ -332,29 +349,70 @@ func encodeData(data []byte, w io.Writer) error {
 //go:embed NotoSans-Regular.ttf
 var notoSansRegular []byte
 
-func makePDF(out io.Writer, r *io.PipeReader, wg *sync.WaitGroup) {
+func makeHTML(out io.Writer, r *io.PipeReader, wg *sync.WaitGroup) {
 	defer wg.Done()
-	p := fpdf.New("P", "in", "letter", "")
-	p.AddUTF8FontFromBytes("noto", "", notoSansRegular)
-	p.SetFont("noto", "", 9)
 
-	// Set up footer function
-	p.SetAutoPageBreak(true, 0.5) // Add 0.5 inch margin at bottom for footer
-	p.SetFooterFunc(func() {
-		p.SetY(-0.5) // Position at 0.5 inches from bottom
-		p.SetFont("noto", "", 8)
-		p.CellFormat(0, 0.2, fmt.Sprintf("Page %d", p.PageNo()), "", 0, "C", false, 0, "")
-	})
+	// Write HTML header
+	fmt.Fprintf(out, `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Minall Output</title>
+    <style>
+        @font-face {
+            font-family: 'Noto Sans';
+            src: url('data:font/ttf;base64,%s') format('truetype');
+        }
+        @page {
+            size: letter;
+            margin: 0.5in;
+        }
+        body {
+            font-family: 'Noto Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-size: 9px;
+            line-height: 1.1;
+            margin: 0;
+            padding: 0;
+            width: 8.5in;
+            height: 11in;
+            box-sizing: border-box;
+        }
+        pre {
+            background-color: #ffffff;
+            padding: 0;
+            margin: 0;
+            white-space: pre-wrap;
+            word-break: break-all;
+            font-family: inherit;
+            font-size: inherit;
+            line-height: inherit;
+            width: 7.5in;
+            max-width: 7.5in;
+        }
+        .page {
+            width: 7.5in;
+            height: 10in;
+            margin: 0.5in;
+            position: relative;
+        }
+    </style>
+</head>
+<body>
+<div class="page">
+<pre>A folder with arrow tabs, newlines, and base64-encoded non-ascii runs and whole-files with base64: prefix. Hash: h:=uint32(5381);for _,b:=range in {h=h*33+uint32(b)}
+`, base64.StdEncoding.EncodeToString(notoSansRegular))
 
-	p.AddPage()
 	var b [2048]byte
 	for {
 		data := b[:]
 		n, err := r.Read(data)
 		data = data[:n]
 		if n > 0 {
-			fmt.Print(string(data))
-			p.Write(1, string(data))
+			// Escape HTML special characters
+			escaped := strings.ReplaceAll(string(data), "&", "&amp;")
+			escaped = strings.ReplaceAll(escaped, "<", "&lt;")
+			escaped = strings.ReplaceAll(escaped, ">", "&gt;")
+			fmt.Fprint(out, escaped)
 		}
 		if err != nil {
 			if err != io.EOF {
@@ -364,7 +422,9 @@ func makePDF(out io.Writer, r *io.PipeReader, wg *sync.WaitGroup) {
 		}
 	}
 
-	if err := p.Output(out); err != nil {
-		fmt.Println("Error writing file: " + err.Error())
-	}
+	// Write HTML footer
+	fmt.Fprintf(out, `</pre>
+</div>
+</body>
+</html>`)
 }
