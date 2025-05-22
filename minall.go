@@ -79,11 +79,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println(`For PDF:
-	Install:  brew install pandoc lualatex (macOS) // sudo apt install pandoc lualatex (Linux)
-	Install: brew install --cask mactex-no-gui
-	Install the fonts
-	Run: to_pdf.sh `)
+	fmt.Println(`Open with a browser & print on letter-size (or change margins in CSS)`)
 }
 
 func DJB2(data []byte) uint32 {
@@ -399,7 +395,7 @@ func makeHTML(out io.Writer, r *io.PipeReader, wg *sync.WaitGroup) {
 </head>
 <body>
 <div class="page">
-<pre>A folder with arrow tabs, newlines, and base64-encoded non-ascii runs and whole-files with base64: prefix. Hash: h:=uint32(5381);for _,b:=range in {h=h*33+uint32(b)}
+<pre>A folder with arrow tabs, newlines, and base64-encoded non-ascii runs and whole-files with base64: prefix. Hash: h:=uint32(5381);for _,b:=range in {h=h*33+uint32(b)}.
 `, base64.StdEncoding.EncodeToString(notoSansRegular))
 
 	var b [2048]byte
